@@ -74,7 +74,7 @@ dconf update
 
 echo "Installing GNOME tools..."
 apt-get update -qq
-apt-get install -y gnome-tweaks gnome-shell-extension-manager unzip wget jq
+apt-get install -y gnome-tweaks gnome-shell-extension-manager unzip wget jq curl
 
 echo "Installing GNOME extensions..."
 
