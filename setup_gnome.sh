@@ -80,12 +80,15 @@ echo "Applying system-wide defaults..."
 mkdir -p /etc/dconf/profile
 mkdir -p /etc/dconf/db/local.d
 
-# Ensure user profile exists
+# Ensure user profile exists (normal user sessions)
 if [ ! -f /etc/dconf/profile/user ]; then
-    echo -e "user-db:user\nsystem-db:local" > /etc/dconf/profile/user
+    cat << 'EOF' > /etc/dconf/profile/user
+user-db:user
+system-db:local
+EOF
 fi
 
-# Create the configuration file for defaults
+# Create the configuration file for system-wide defaults (user sessions)
 # NOTE: schema path must be all lowercase: org/gnome/desktop/interface
 cat > /etc/dconf/db/local.d/01-custom-setup <<EOF
 [org/gnome/desktop/interface]
@@ -99,7 +102,29 @@ titlebar-font='Inter Bold 11'
 
 EOF
 
-echo "Updating system dconf database..."
+# Configure GDM (login/lock screen) to use the same fonts
+mkdir -p /etc/dconf/db/gdm.d
+
+cat > /etc/dconf/db/gdm.d/01-gdm-fonts <<EOF
+[org/gnome/desktop/interface]
+font-name='Inter 11'
+document-font-name='Inter 11'
+monospace-font-name='JetBrains Mono 10'
+
+[org/gnome/desktop/wm/preferences]
+titlebar-font='Inter Bold 11'
+
+EOF
+
+# Ensure GDM dconf profile exists
+if [ ! -f /etc/dconf/profile/gdm ]; then
+    cat << 'EOF' > /etc/dconf/profile/gdm
+user-db:user
+system-db:gdm
+EOF
+fi
+
+echo "Updating system dconf database (user + gdm)..."
 dconf update
 
 echo "Installing GNOME tools..."
@@ -230,7 +255,7 @@ def gsettings_get(schema, key):
     ).strip()
     return out
 
-# Set fonts for the user
+# Set fonts for the user session
 gsettings_set("org.gnome.desktop.interface", "font-name", "Inter 11")
 gsettings_set("org.gnome.desktop.interface", "document-font-name", "Inter 11")
 gsettings_set("org.gnome.desktop.interface", "monospace-font-name", "JetBrains Mono 10")
@@ -279,5 +304,5 @@ if changed:
 EOF
 
 echo "SETUP COMPLETE"
-echo "You may need to log out and log back in (or restart GNOME Shell) for all changes to take full effect."
+echo "You may need to log out and log back in, and possibly reboot or restart GDM, for all font and greeter changes to take full effect."
 
