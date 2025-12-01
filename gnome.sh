@@ -20,7 +20,8 @@ install_local_font() {
     local folder_name=$1
     local dest_name=$2
     local source_path="$SCRIPT_DIR/fonts/$folder_name"
-    local dest_path="/usr/local/share/fonts/$dest_name"
+    # IMPORTANT: install into /usr/share/fonts (always scanned), not /usr/local/share/fonts
+    local dest_path="/usr/share/fonts/$dest_name"
 
     if [ ! -d "$source_path" ]; then
         echo "Warning: Local font directory not found: $source_path"
@@ -36,6 +37,10 @@ install_local_font() {
     fi
 
     find "$source_path" -type f \( -name "*.ttf" -o -name "*.otf" \) -exec cp {} "$dest_path" \;
+
+    # Make sure permissions are sane
+    find "$dest_path" -type f -exec chmod 644 {} \; 2>/dev/null || true
+    find "$dest_path" -type d -exec chmod 755 {} \; 2>/dev/null || true
 }
 
 install_icon_theme() {
@@ -72,8 +77,26 @@ echo "Installing fonts from fonts/ directory..."
 install_local_font "Inter" "Inter"
 install_local_font "JetBrains_Mono" "JetBrains_Mono"
 
-echo "Refreshing font cache..."
-fc-cache -f -v > /dev/null
+echo "Refreshing font cache (system)..."
+fc-cache -f -v > /dev/null || true
+
+echo "Refreshing font cache for user $ACTUAL_USER..."
+sudo -u "$ACTUAL_USER" fc-cache -f -v > /dev/null 2>&1 || true
+
+JB_FAMILY="JetBrains Mono" 
+
+if command -v fc-list >/dev/null 2>&1; then
+    DETECTED_JB=$(fc-list -f '%{family}\n' | grep -i 'jetbrains' | head -n1 | sed 's/,.*//' || true)
+    if [ -n "$DETECTED_JB" ]; then
+        JB_FAMILY="$DETECTED_JB"
+        echo "Detected JetBrains monospace family from fontconfig: '$JB_FAMILY'"
+    else
+        echo "Warning: fc-list could not find any JetBrains font family. Falling back to '$JB_FAMILY'."
+        echo "Check that fonts/JetBrains_Mono actually contains .ttf/.otf files."
+    fi
+else
+    echo "Warning: fc-list not found; assuming JetBrains family is '$JB_FAMILY'."
+fi
 
 echo "Applying system-wide defaults..."
 
@@ -89,12 +112,11 @@ EOF
 fi
 
 # Create the configuration file for system-wide defaults (user sessions)
-# NOTE: schema path must be all lowercase: org/gnome/desktop/interface
 cat > /etc/dconf/db/local.d/01-custom-setup <<EOF
 [org/gnome/desktop/interface]
 font-name='Inter 11'
 document-font-name='Inter 11'
-monospace-font-name='JetBrains Mono 10'
+monospace-font-name='${JB_FAMILY} 10'
 enable-hot-corners=false
 
 [org/gnome/desktop/wm/preferences]
@@ -102,15 +124,14 @@ titlebar-font='Inter Bold 11'
 
 EOF
 
-# (Optional) GDM system database; may or may not be honored on your distro,
-# but it's harmless to keep, and we ALSO configure the GDM user directly below.
+# GDM system database; may or may not be honored on your distro
 mkdir -p /etc/dconf/db/gdm.d
 
 cat > /etc/dconf/db/gdm.d/01-gdm-fonts <<EOF
 [org/gnome/desktop/interface]
 font-name='Inter 11'
 document-font-name='Inter 11'
-monospace-font-name='JetBrains Mono 10'
+monospace-font-name='${JB_FAMILY} 10'
 
 [org/gnome/desktop/wm/preferences]
 titlebar-font='Inter Bold 11'
@@ -244,7 +265,7 @@ UUID_DING="ding@rastersoft.com"
 
 echo "Applying per-user GNOME settings, icon theme, and enabling extensions for $ACTUAL_USER..."
 
-sudo -u "$ACTUAL_USER" dbus-run-session -- python3 - << 'EOF'
+sudo -u "$ACTUAL_USER" dbus-run-session -- python3 - <<EOF
 import subprocess, ast
 
 def gsettings_set(schema, key, value):
@@ -257,10 +278,13 @@ def gsettings_get(schema, key):
     ).strip()
     return out
 
+JB_FAMILY = "${JB_FAMILY}"
+mono_font = f"{JB_FAMILY} 10"
+
 # Set fonts for the user session
 gsettings_set("org.gnome.desktop.interface", "font-name", "Inter 11")
 gsettings_set("org.gnome.desktop.interface", "document-font-name", "Inter 11")
-gsettings_set("org.gnome.desktop.interface", "monospace-font-name", "JetBrains Mono 10")
+gsettings_set("org.gnome.desktop.interface", "monospace-font-name", mono_font)
 gsettings_set("org.gnome.desktop.wm.preferences", "titlebar-font", "Inter Bold 11")
 
 # Set icon theme for the user
@@ -322,7 +346,7 @@ if [ -n "$GDM_USER" ]; then
 
     sudo -u "$GDM_USER" dbus-run-session -- gsettings set org.gnome.desktop.interface font-name 'Inter 11' || true
     sudo -u "$GDM_USER" dbus-run-session -- gsettings set org.gnome.desktop.interface document-font-name 'Inter 11' || true
-    sudo -u "$GDM_USER" dbus-run-session -- gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 10' || true
+    sudo -u "$GDM_USER" dbus-run-session -- gsettings set org.gnome.desktop.interface monospace-font-name "${JB_FAMILY} 10" || true
     sudo -u "$GDM_USER" dbus-run-session -- gsettings set org.gnome.desktop.wm.preferences titlebar-font 'Inter Bold 11' || true
 
     # Optional: also give the login screen the Mkos-Big-Sur icons
