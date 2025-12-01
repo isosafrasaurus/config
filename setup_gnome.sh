@@ -2,7 +2,7 @@
 
 # Require sudo permission
 if [[ $EUID -ne 0 ]]; then
-   echo "Error: This script must be run with sudo." 
+   echo "Error: This script must be run with sudo."
    exit 1
 fi
 
@@ -38,6 +38,35 @@ install_local_font() {
     find "$source_path" -type f \( -name "*.ttf" -o -name "*.otf" \) -exec cp {} "$dest_path" \;
 }
 
+install_icon_theme() {
+    local theme_name=$1
+    local source_path="$SCRIPT_DIR/icons/$theme_name"
+    local dest_path="/usr/share/icons/$theme_name"
+
+    if [ ! -d "$source_path" ]; then
+        echo "Warning: Icon theme directory not found: $source_path"
+        return
+    fi
+
+    echo "Installing icon theme $theme_name to $dest_path..."
+
+    if [ -d "$dest_path" ]; then
+        echo "Updating existing icon theme installation..."
+        rm -rf "$dest_path"
+    fi
+
+    mkdir -p "$(dirname "$dest_path")"
+    cp -r "$source_path" "$dest_path"
+
+    # Update icon cache if possible
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        if [ -f "$dest_path/index.theme" ]; then
+            echo "Updating icon cache for $theme_name..."
+            gtk-update-icon-cache -f -t "$dest_path" || true
+        fi
+    fi
+}
+
 echo "Installing fonts from fonts/ directory..."
 
 install_local_font "Inter" "Inter"
@@ -57,11 +86,12 @@ if [ ! -f /etc/dconf/profile/user ]; then
 fi
 
 # Create the configuration file for defaults
+# NOTE: schema path must be all lowercase: org/gnome/desktop/interface
 cat > /etc/dconf/db/local.d/01-custom-setup <<EOF
-[org/gnome/desktop/Interface]
-font-name='Inter Regular 11'
-document-font-name='Inter Regular 11'
-monospace-font-name='JetBrains Mono Regular 10'
+[org/gnome/desktop/interface]
+font-name='Inter 11'
+document-font-name='Inter 11'
+monospace-font-name='JetBrains Mono 10'
 enable-hot-corners=false
 
 [org/gnome/desktop/wm/preferences]
@@ -74,7 +104,19 @@ dconf update
 
 echo "Installing GNOME tools..."
 apt-get update -qq
-apt-get install -y gnome-tweaks gnome-shell-extension-manager unzip wget jq curl
+apt-get install -y \
+    gnome-tweaks \
+    gnome-shell-extension-manager \
+    unzip \
+    wget \
+    jq \
+    curl \
+    libglib2.0-bin \
+    libgtk-3-bin \
+    python3
+
+echo "Installing WhiteSur icon theme..."
+install_icon_theme "WhiteSur"
 
 echo "Installing GNOME extensions..."
 
@@ -85,7 +127,7 @@ install_extension_by_id() {
     
     echo "Processing extension ID: $ext_id"
     
-    # Get GNOME Shell version
+    # Get GNOME Shell major version
     local shell_ver
     shell_ver=$(gnome-shell --version | cut -d ' ' -f 3 | cut -d . -f 1)
     
@@ -109,7 +151,7 @@ install_extension_by_id() {
     local dest="$EXT_DIR/$uuid"
     
     if [ -d "$dest" ]; then
-        echo "Extension $uuid (ID: $ext_id) appears to be installed. Skipping..."
+        echo "Extension $uuid (ID: $ext_id) appears to be installed. Skipping download..."
     else
         echo "Installing $uuid..."
         mkdir -p "$dest"
@@ -120,12 +162,20 @@ install_extension_by_id() {
         unzip -q -o "$temp_zip" -d "$dest"
         rm "$temp_zip"
         
-        # Correct permissions
-        chmod -R 644 "$dest"/*
-        find "$dest" -type d -exec chmod 755 {} \;
-        
         echo "Installed to $dest"
     fi
+
+    # In all cases, ensure schemas are compiled if present
+    if [ -d "$dest/schemas" ]; then
+        if ls "$dest/schemas"/*.gschema.xml >/dev/null 2>&1; then
+            echo "Compiling GSettings schemas for $uuid..."
+            glib-compile-schemas "$dest/schemas"
+        fi
+    fi
+
+    # Correct permissions
+    chmod -R 644 "$dest"/* 2>/dev/null || true
+    find "$dest" -type d -exec chmod 755 {} \; 2>/dev/null || true
 }
 
 ID_BLUR=3193
@@ -140,57 +190,94 @@ echo "Loading configuration for user $ACTUAL_USER..."
 
 CONF_DIR="$SCRIPT_DIR/conf"
 
+load_dconf() {
+    local path=$1
+    local file=$2
+    if [ -f "$file" ]; then
+        echo "Loading config: $file -> $path"
+        # Use a temporary DBus session to write to the user's dconf database
+        sudo -u "$ACTUAL_USER" dbus-run-session -- dconf load "$path" < "$file"
+    else
+        echo "Config file not found: $file"
+    fi
+}
+
 if [ ! -d "$CONF_DIR" ]; then
     echo "Warning: ./conf directory not found at $CONF_DIR. Skipping dconf load."
 else
-    load_dconf() {
-        local path=$1
-        local file=$2
-        if [ -f "$file" ]; then
-            echo "Loading config: $file -> $path"
-            # We must run dconf load as the user, connected to their DBUS session
-            # Finding the DBUS address is tricky from sudo. 
-            # We use `machinectl` or simpler `sudo -u` assuming user is logged in graphically.
-            
-            # This attempts to connect to the user's existing D-Bus session
-            local user_dbus_pid
-            user_dbus_pid=$(pgrep -u "$ACTUAL_USER" gnome-session | head -n 1)
-            
-            if [ -z "$user_dbus_pid" ]; then
-                echo "User not logged in graphically. Applying to user's dconf file directly (might need re-login)."
-                # This works if user isn't running dconf-service, otherwise requires dbus-launch
-                sudo -u "$ACTUAL_USER" dbus-launch dconf load "$path" < "$file"
-            else
-                # Inject into running session
-                local dbus_addr
-                dbus_addr=$(grep -z DBUS_SESSION_BUS_ADDRESS /proc/"$user_dbus_pid"/environ | cut -d= -f2-)
-                sudo -u "$ACTUAL_USER" DBUS_SESSION_BUS_ADDRESS="$dbus_addr" dconf load "$path" < "$file"
-            fi
-        else
-            echo "Config file not found: $file"
-        fi
-    }
-
-    # Load configurations
     load_dconf "/org/gnome/shell/extensions/blur-my-shell/" "$CONF_DIR/blur-my-shell.conf"
     load_dconf "/org/gnome/shell/extensions/dash-to-dock/" "$CONF_DIR/dash-to-dock.conf"
     load_dconf "/org/gnome/shell/extensions/ding/" "$CONF_DIR/ding.conf"
 fi
-
-# Enable the extensions for the user
-echo "Enabling extensions for $ACTUAL_USER..."
 
 # Standard UUIDs for these extensions
 UUID_BLUR="blur-my-shell@aunetx"
 UUID_DOCK="dash-to-dock@micxgx.gmail.com"
 UUID_DING="ding@rastersoft.com"
 
-# We generate a script to run as the user to enable extensions
-sudo -u "$ACTUAL_USER" bash << EOF
-    gnome-extensions enable $UUID_BLUR 2>/dev/null
-    gnome-extensions enable $UUID_DOCK 2>/dev/null
-    gnome-extensions enable $UUID_DING 2>/dev/null
+echo "Applying per-user GNOME settings, icon theme, and enabling extensions for $ACTUAL_USER..."
+
+sudo -u "$ACTUAL_USER" dbus-run-session -- python3 - << 'EOF'
+import subprocess, ast
+
+def gsettings_set(schema, key, value):
+    subprocess.check_call(["gsettings", "set", schema, key, value])
+
+def gsettings_get(schema, key):
+    out = subprocess.check_output(
+        ["gsettings", "get", schema, key],
+        text=True,
+    ).strip()
+    return out
+
+# Set fonts for the user
+gsettings_set("org.gnome.desktop.interface", "font-name", "Inter 11")
+gsettings_set("org.gnome.desktop.interface", "document-font-name", "Inter 11")
+gsettings_set("org.gnome.desktop.interface", "monospace-font-name", "JetBrains Mono 10")
+gsettings_set("org.gnome.desktop.wm.preferences", "titlebar-font", "Inter Bold 11")
+
+# Set icon theme for the user
+gsettings_set("org.gnome.desktop.interface", "icon-theme", "WhiteSur")
+
+# Ensure extensions are enabled
+uuids_to_enable = [
+    "blur-my-shell@aunetx",
+    "dash-to-dock@micxgx.gmail.com",
+    "ding@rastersoft.com",
+]
+
+def get_enabled_extensions():
+    try:
+        out = gsettings_get("org.gnome.shell", "enabled-extensions")
+    except subprocess.CalledProcessError:
+        return []
+
+    # gsettings may prefix with '@as '
+    if out.startswith("@as "):
+        out = out[4:]
+
+    try:
+        current = ast.literal_eval(out)
+        if not isinstance(current, list):
+            return []
+        return current
+    except Exception:
+        return []
+
+enabled = get_enabled_extensions()
+changed = False
+
+for uid in uuids_to_enable:
+    if uid not in enabled:
+        enabled.append(uid)
+        changed = True
+
+if changed:
+    subprocess.check_call(
+        ["gsettings", "set", "org.gnome.shell", "enabled-extensions", str(enabled)]
+    )
 EOF
 
 echo "SETUP COMPLETE"
-echo "You may need to log out and log back in for changes to take effect"
+echo "You may need to log out and log back in (or restart GNOME Shell) for all changes to take full effect."
+
