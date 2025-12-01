@@ -45,7 +45,7 @@ install_local_font() {
 
 install_icon_theme() {
     local theme_name=$1
-    local source_path="$SCRIPT_DIR/icons/$theme_name"
+    local source_path="$SCRIPT_DIR/$theme_name"
     local dest_path="/usr/share/icons/$theme_name"
 
     if [ ! -d "$source_path" ]; then
