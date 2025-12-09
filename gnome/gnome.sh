@@ -20,7 +20,7 @@ install_local_font() {
     local folder_name=$1
     local dest_name=$2
     local source_path="$SCRIPT_DIR/fonts/$folder_name"
-    # IMPORTANT: install into /usr/share/fonts (always scanned), not /usr/local/share/fonts
+    # IMPORTANT: install into /usr/share/fonts, not /usr/local/share/fonts
     local dest_path="/usr/share/fonts/$dest_name"
 
     if [ ! -d "$source_path" ]; then
@@ -146,7 +146,7 @@ system-db:gdm
 EOF
 fi
 
-echo "Updating system dconf database (user + gdm)..."
+echo "Updating system dconf database..."
 dconf update
 
 echo "Installing GNOME tools..."
@@ -164,7 +164,7 @@ apt-get install -y \
     dbus-user-session
 
 echo "Installing Mkos-Big-Sur icon theme..."
-install_icon_theme "Mkos-Big-Sur"
+install_icon_theme "mkosbigsur"
 
 echo "Installing GNOME extensions..."
 
@@ -236,7 +236,7 @@ install_extension_by_id "$ID_DING"
 
 echo "Loading configuration for user $ACTUAL_USER..."
 
-CONF_DIR="$SCRIPT_DIR/conf"
+CONF_DIR="$SCRIPT_DIR"
 
 load_dconf() {
     local path=$1

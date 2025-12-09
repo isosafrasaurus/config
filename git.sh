@@ -31,7 +31,7 @@ GH_NAME=$(gh api user --template '{{if .name}}{{.name}}{{else}}{{.login}}{{end}}
 
 GH_EMAIL=$(gh api user --template '{{.email}}')
 GH_LOGIN=$(gh api user --template '{{.login}}')
-GH_ID=$(gh api user --template '{{.id}}')
+GH_ID=$(gh api user --template '{{printf "%.0f" .id}}')
 
 if [ -z "$GH_EMAIL" ] || [ "$GH_EMAIL" == "<no value>" ]; then
   echo "No public email found. Configuring with GitHub noreply email."
